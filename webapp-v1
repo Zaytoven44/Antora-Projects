@@ -1,0 +1,881 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { Calculator, Info, TrendingUp, BarChart3, BookOpen } from 'lucide-react';
+
+const PowerCalculator = () => {
+  const [inputs, setInputs] = useState({
+    effectSize: '',
+    standardDeviation: '',
+    alpha: 0.05,
+    power: 0.80,
+    testType: 'two-tailed'
+  });
+
+  const [result, setResult] = useState(null);
+  const [errors, setErrors] = useState({});
+  const canvasRef = useRef(null);
+  const powerCanvasRef = useRef(null);
+
+  // Normal distribution probability density function
+  const normalPDF = (x, mean = 0, std = 1) => {
+    return (1 / (std * Math.sqrt(2 * Math.PI))) * Math.exp(-0.5 * Math.pow((x - mean) / std, 2));
+  };
+
+  // Z-scores for common confidence levels
+  const getZScore = (alpha, testType) => {
+    const alphaLevel = testType === 'two-tailed' ? alpha / 2 : alpha;
+    if (alphaLevel === 0.025) return 1.96; // 95% confidence, two-tailed
+    if (alphaLevel === 0.005) return 2.576; // 99% confidence, two-tailed
+    if (alphaLevel === 0.05) return 1.645; // 95% confidence, one-tailed
+    if (alphaLevel === 0.01) return 2.326; // 99% confidence, one-tailed
+    // Approximation for other values
+    return Math.abs(normalInverse(alphaLevel));
+  };
+
+  // Approximate inverse normal distribution
+  const normalInverse = (p) => {
+    // Beasley-Springer-Moro algorithm approximation
+    const a = [0, -3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02, 1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00];
+    const b = [0, -5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02, 6.680131188771972e+01, -1.328068155288572e+01];
+    const c = [0, -7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e+00, -2.549732539343734e+00, 4.374664141464968e+00, 2.938163982698783e+00];
+    const d = [0, 7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e+00, 3.754408661907416e+00];
+
+    if (p < 0.5) {
+      const q = Math.sqrt(-2 * Math.log(p));
+      return -(((((c[1] * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) * q + c[6]) / ((((d[1] * q + d[2]) * q + d[3]) * q + d[4]) * q + 1);
+    } else {
+      const q = Math.sqrt(-2 * Math.log(1 - p));
+      return (((((c[1] * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) * q + c[6]) / ((((d[1] * q + d[2]) * q + d[3]) * q + d[4]) * q + 1);
+    }
+  };
+
+  const calculateSampleSize = () => {
+    const newErrors = {};
+
+    // Validation
+    if (!inputs.effectSize || inputs.effectSize <= 0) {
+      newErrors.effectSize = 'Effect size must be positive';
+    }
+    if (!inputs.standardDeviation || inputs.standardDeviation <= 0) {
+      newErrors.standardDeviation = 'Standard deviation must be positive';
+    }
+    if (inputs.alpha <= 0 || inputs.alpha >= 1) {
+      newErrors.alpha = 'Alpha must be between 0 and 1';
+    }
+    if (inputs.power <= 0 || inputs.power >= 1) {
+      newErrors.power = 'Power must be between 0 and 1';
+    }
+
+    setErrors(newErrors);
+
+    if (Object.keys(newErrors).length > 0) {
+      setResult(null);
+      return;
+    }
+
+    try {
+      const effectSize = parseFloat(inputs.effectSize);
+      const sd = parseFloat(inputs.standardDeviation);
+      const alpha = parseFloat(inputs.alpha);
+      const power = parseFloat(inputs.power);
+
+      // Calculate Cohen's d (standardized effect size)
+      const cohensD = effectSize / sd;
+
+      // Get critical values
+      const zAlpha = getZScore(alpha, inputs.testType);
+      const zBeta = Math.abs(normalInverse(1 - power));
+
+      // Sample size calculation for two-sample t-test
+      const n = 2 * Math.pow((zAlpha + zBeta) / cohensD, 2);
+
+      // Round up to nearest integer
+      const sampleSizePerGroup = Math.ceil(n);
+      const totalSampleSize = sampleSizePerGroup * 2;
+
+      setResult({
+        sampleSizePerGroup,
+        totalSampleSize,
+        cohensD: cohensD.toFixed(3),
+        confidence: ((1 - alpha) * 100).toFixed(1),
+        powerPercent: (power * 100).toFixed(1)
+      });
+    } catch (error) {
+      setErrors({ general: 'Error in calculation. Please check your inputs.' });
+      setResult(null);
+    }
+  };
+
+  // Draw the hypothesis test visualization
+  const drawHypothesisTest = () => {
+    const canvas = canvasRef.current;
+    if (!canvas || !result) return;
+
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width = 600;
+    const height = canvas.height = 300;
+
+    ctx.clearRect(0, 0, width, height);
+
+    // Set up coordinate system
+    const xMin = -4;
+    const xMax = 4;
+    const yMax = 0.5;
+
+    const scaleX = (x) => ((x - xMin) / (xMax - xMin)) * width;
+    const scaleY = (y) => height - (y / yMax) * (height - 40);
+
+    // Get parameters
+    const alpha = parseFloat(inputs.alpha);
+    const zAlpha = getZScore(alpha, inputs.testType);
+    const criticalValue = inputs.testType === 'two-tailed' ? zAlpha : zAlpha;
+
+    // Draw axes
+    ctx.strokeStyle = '#374151';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, scaleY(0));
+    ctx.lineTo(width, scaleY(0));
+    ctx.stroke();
+
+    // Draw null hypothesis curve (centered at 0)
+    ctx.strokeStyle = '#3B82F6';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let x = xMin; x <= xMax; x += 0.01) {
+      const y = normalPDF(x);
+      const pixelX = scaleX(x);
+      const pixelY = scaleY(y);
+      if (x === xMin) {
+        ctx.moveTo(pixelX, pixelY);
+      } else {
+        ctx.lineTo(pixelX, pixelY);
+      }
+    }
+    ctx.stroke();
+
+    // Fill rejection region(s)
+    ctx.fillStyle = 'rgba(239, 68, 68, 0.3)'; // Red for alpha
+    if (inputs.testType === 'two-tailed') {
+      // Left tail
+      ctx.beginPath();
+      ctx.moveTo(scaleX(-criticalValue), scaleY(0));
+      for (let x = -criticalValue; x >= xMin; x -= 0.01) {
+        const y = normalPDF(x);
+        ctx.lineTo(scaleX(x), scaleY(y));
+      }
+      ctx.lineTo(scaleX(xMin), scaleY(0));
+      ctx.closePath();
+      ctx.fill();
+
+      // Right tail
+      ctx.beginPath();
+      ctx.moveTo(scaleX(criticalValue), scaleY(0));
+      for (let x = criticalValue; x <= xMax; x += 0.01) {
+        const y = normalPDF(x);
+        ctx.lineTo(scaleX(x), scaleY(y));
+      }
+      ctx.lineTo(scaleX(xMax), scaleY(0));
+      ctx.closePath();
+      ctx.fill();
+    } else {
+      // One tail (right side for simplicity)
+      ctx.beginPath();
+      ctx.moveTo(scaleX(criticalValue), scaleY(0));
+      for (let x = criticalValue; x <= xMax; x += 0.01) {
+        const y = normalPDF(x);
+        ctx.lineTo(scaleX(x), scaleY(y));
+      }
+      ctx.lineTo(scaleX(xMax), scaleY(0));
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // Draw critical value lines
+    ctx.strokeStyle = '#EF4444';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 5]);
+    if (inputs.testType === 'two-tailed') {
+      ctx.beginPath();
+      ctx.moveTo(scaleX(-criticalValue), scaleY(0));
+      ctx.lineTo(scaleX(-criticalValue), scaleY(normalPDF(-criticalValue)));
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(scaleX(criticalValue), scaleY(0));
+      ctx.lineTo(scaleX(criticalValue), scaleY(normalPDF(criticalValue)));
+      ctx.stroke();
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(scaleX(criticalValue), scaleY(0));
+      ctx.lineTo(scaleX(criticalValue), scaleY(normalPDF(criticalValue)));
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    // Add labels
+    ctx.fillStyle = '#374151';
+    ctx.font = '14px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Null Hypothesis Distribution', width / 2, 25);
+
+    // Add alpha label
+    ctx.fillStyle = '#EF4444';
+    ctx.font = '12px sans-serif';
+    if (inputs.testType === 'two-tailed') {
+      ctx.fillText(`α/2 = ${(alpha/2).toFixed(3)}`, scaleX(-criticalValue), scaleY(0.1));
+      ctx.fillText(`α/2 = ${(alpha/2).toFixed(3)}`, scaleX(criticalValue), scaleY(0.1));
+    } else {
+      ctx.fillText(`α = ${alpha.toFixed(3)}`, scaleX(criticalValue), scaleY(0.1));
+    }
+
+    // Add critical value labels
+    ctx.fillStyle = '#374151';
+    ctx.fillText('0', scaleX(0), height - 5);
+    if (inputs.testType === 'two-tailed') {
+      ctx.fillText(`-${criticalValue.toFixed(2)}`, scaleX(-criticalValue), height - 5);
+      ctx.fillText(`${criticalValue.toFixed(2)}`, scaleX(criticalValue), height - 5);
+    } else {
+      ctx.fillText(`${criticalValue.toFixed(2)}`, scaleX(criticalValue), height - 5);
+    }
+  };
+
+  // Draw the power analysis visualization
+  const drawPowerAnalysis = () => {
+    const canvas = powerCanvasRef.current;
+    if (!canvas || !result) return;
+
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width = 600;
+    const height = canvas.height = 300;
+
+    ctx.clearRect(0, 0, width, height);
+
+    // Set up coordinate system
+    const xMin = -2;
+    const xMax = 6;
+    const yMax = 0.5;
+
+    const scaleX = (x) => ((x - xMin) / (xMax - xMin)) * width;
+    const scaleY = (y) => height - (y / yMax) * (height - 40);
+
+    // Get parameters
+    const alpha = parseFloat(inputs.alpha);
+    const power = parseFloat(inputs.power);
+    const cohensD = parseFloat(result.cohensD);
+    const zAlpha = getZScore(alpha, inputs.testType);
+    const zBeta = Math.abs(normalInverse(1 - power));
+
+    // Effect size determines the separation between distributions
+    const effectMean = cohensD * 2; // Approximate visual separation
+
+    // Draw null hypothesis curve (centered at 0)
+    ctx.strokeStyle = '#3B82F6';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let x = xMin; x <= xMax; x += 0.01) {
+      const y = normalPDF(x, 0);
+      const pixelX = scaleX(x);
+      const pixelY = scaleY(y);
+      if (x === xMin) {
+        ctx.moveTo(pixelX, pixelY);
+      } else {
+        ctx.lineTo(pixelX, pixelY);
+      }
+    }
+    ctx.stroke();
+
+    // Draw alternative hypothesis curve
+    ctx.strokeStyle = '#10B981';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let x = xMin; x <= xMax; x += 0.01) {
+      const y = normalPDF(x, effectMean);
+      const pixelX = scaleX(x);
+      const pixelY = scaleY(y);
+      if (x === xMin) {
+        ctx.moveTo(pixelX, pixelY);
+      } else {
+        ctx.lineTo(pixelX, pixelY);
+      }
+    }
+    ctx.stroke();
+
+    // Critical value
+    const criticalValue = inputs.testType === 'two-tailed' ? zAlpha : zAlpha;
+
+    // Fill Type I error (alpha) - rejection region under null
+    ctx.fillStyle = 'rgba(239, 68, 68, 0.3)';
+    ctx.beginPath();
+    ctx.moveTo(scaleX(criticalValue), scaleY(0));
+    for (let x = criticalValue; x <= xMax; x += 0.01) {
+      const y = normalPDF(x, 0);
+      ctx.lineTo(scaleX(x), scaleY(y));
+    }
+    ctx.lineTo(scaleX(xMax), scaleY(0));
+    ctx.closePath();
+    ctx.fill();
+
+    // Fill Power (1-β) - area under alternative curve beyond critical value
+    ctx.fillStyle = 'rgba(16, 185, 129, 0.3)';
+    ctx.beginPath();
+    ctx.moveTo(scaleX(criticalValue), scaleY(0));
+    for (let x = criticalValue; x <= xMax; x += 0.01) {
+      const y = normalPDF(x, effectMean);
+      ctx.lineTo(scaleX(x), scaleY(y));
+    }
+    ctx.lineTo(scaleX(xMax), scaleY(0));
+    ctx.closePath();
+    ctx.fill();
+
+    // Fill Type II error (beta) - area under alternative curve before critical value
+    ctx.fillStyle = 'rgba(251, 191, 36, 0.3)';
+    ctx.beginPath();
+    ctx.moveTo(scaleX(xMin), scaleY(0));
+    for (let x = xMin; x <= criticalValue; x += 0.01) {
+      const y = normalPDF(x, effectMean);
+      ctx.lineTo(scaleX(x), scaleY(y));
+    }
+    ctx.lineTo(scaleX(criticalValue), scaleY(0));
+    ctx.closePath();
+    ctx.fill();
+
+    // Draw critical value line
+    ctx.strokeStyle = '#EF4444';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath();
+    ctx.moveTo(scaleX(criticalValue), scaleY(0));
+    ctx.lineTo(scaleX(criticalValue), scaleY(Math.max(normalPDF(criticalValue, 0), normalPDF(criticalValue, effectMean))));
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Add labels
+    ctx.fillStyle = '#374151';
+    ctx.font = '14px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Power Analysis: Null vs Alternative Hypothesis', width / 2, 25);
+
+    // Legend
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#3B82F6';
+    ctx.fillText('● Null Hypothesis (H₀)', 10, height - 60);
+    ctx.fillStyle = '#10B981';
+    ctx.fillText('● Alternative Hypothesis (H₁)', 10, height - 45);
+    ctx.fillStyle = '#EF4444';
+    ctx.fillText(`■ Type I Error (α = ${alpha.toFixed(3)})`, 10, height - 30);
+    ctx.fillStyle = '#10B981';
+    ctx.fillText(`■ Power (1-β = ${power.toFixed(3)})`, 10, height - 15);
+    ctx.fillStyle = '#F59E0B';
+    ctx.fillText(`■ Type II Error (β = ${(1-power).toFixed(3)})`, 200, height - 15);
+
+    // Add effect size annotation
+    ctx.fillStyle = '#374151';
+    ctx.textAlign = 'center';
+    ctx.fillText(`Effect Size: d = ${result.cohensD}`, width / 2, height - 45);
+  };
+
+  const handleInputChange = (field, value) => {
+    setInputs(prev => ({ ...prev, [field]: value }));
+  };
+
+  useEffect(() => {
+    if (inputs.effectSize && inputs.standardDeviation) {
+      calculateSampleSize();
+    }
+  }, [inputs]);
+
+  useEffect(() => {
+    if (result) {
+      drawHypothesisTest();
+      drawPowerAnalysis();
+    }
+  }, [result, inputs]);
+
+  const getEffectSizeInterpretation = (cohensD) => {
+    const d = Math.abs(parseFloat(cohensD));
+    if (d < 0.2) return 'Very small';
+    if (d < 0.5) return 'Small';
+    if (d < 0.8) return 'Medium';
+    return 'Large';
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-6">
+      <div className="max-w-4xl mx-auto">
+        <div className="bg-white rounded-2xl shadow-xl overflow-hidden">
+          {/* Header */}
+          <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-8 text-white">
+            <div className="flex items-center gap-3 mb-4">
+              <Calculator className="w-8 h-8" />
+              <h1 className="text-3xl font-bold">Statistical Power Calculator</h1>
+            </div>
+            <p className="text-blue-100 text-lg">
+              Calculate the sample size needed for your experiment based on expected effect size, power, and significance level.
+            </p>
+          </div>
+
+          <div className="p-8">
+            <div className="grid md:grid-cols-1 gap-8">
+              {/* Input Panel */}
+              <div className="grid md:grid-cols-2 gap-8">
+                <div className="space-y-6">
+                  <h2 className="text-2xl font-semibold text-gray-800 mb-6">Input Parameters</h2>
+
+                {/* Effect Size */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Expected Effect Size (Raw Units)
+                    <div className="inline-flex items-center ml-2 text-gray-500">
+                      <Info className="w-4 h-4" />
+                    </div>
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={inputs.effectSize}
+                    onChange={(e) => handleInputChange('effectSize', e.target.value)}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="e.g., 2.5"
+                  />
+                  {errors.effectSize && <p className="text-red-500 text-sm mt-1">{errors.effectSize}</p>}
+                  <p className="text-gray-500 text-sm mt-1">The minimum meaningful difference you want to detect</p>
+                </div>
+
+                {/* Standard Deviation */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Standard Deviation
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={inputs.standardDeviation}
+                    onChange={(e) => handleInputChange('standardDeviation', e.target.value)}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="e.g., 5.0"
+                  />
+                  {errors.standardDeviation && <p className="text-red-500 text-sm mt-1">{errors.standardDeviation}</p>}
+                  <p className="text-gray-500 text-sm mt-1">Expected variability in your measurements</p>
+                </div>
+
+                {/* Alpha Level */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Significance Level (α)
+                  </label>
+                  <select
+                    value={inputs.alpha}
+                    onChange={(e) => handleInputChange('alpha', parseFloat(e.target.value))}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value={0.05}>0.05 (95% confidence)</option>
+                    <option value={0.01}>0.01 (99% confidence)</option>
+                    <option value={0.10}>0.10 (90% confidence)</option>
+                  </select>
+                  <p className="text-gray-500 text-sm mt-1">Probability of Type I error (false positive)</p>
+                </div>
+
+                {/* Power */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Statistical Power (1-β)
+                  </label>
+                  <select
+                    value={inputs.power}
+                    onChange={(e) => handleInputChange('power', parseFloat(e.target.value))}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value={0.80}>0.80 (80% power)</option>
+                    <option value={0.90}>0.90 (90% power)</option>
+                    <option value={0.95}>0.95 (95% power)</option>
+                    <option value={0.70}>0.70 (70% power)</option>
+                  </select>
+                  <p className="text-gray-500 text-sm mt-1">Probability of detecting an effect if it exists</p>
+                </div>
+
+                {/* Test Type */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Test Type
+                  </label>
+                  <select
+                    value={inputs.testType}
+                    onChange={(e) => handleInputChange('testType', e.target.value)}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value="two-tailed">Two-tailed test</option>
+                    <option value="one-tailed">One-tailed test</option>
+                  </select>
+                  <p className="text-gray-500 text-sm mt-1">Direction of the hypothesis test</p>
+                </div>
+              </div>
+
+              {/* Results Panel */}
+              <div className="space-y-6">
+                <h2 className="text-2xl font-semibold text-gray-800 mb-6">Results</h2>
+
+                {result ? (
+                  <div className="space-y-4">
+                    {/* Main Results */}
+                    <div className="bg-gradient-to-r from-green-50 to-emerald-50 p-6 rounded-xl border border-green-200">
+                      <div className="flex items-center gap-2 mb-4">
+                        <TrendingUp className="w-6 h-6 text-green-600" />
+                        <h3 className="text-xl font-semibold text-green-800">Sample Size Required</h3>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="text-center">
+                          <div className="text-3xl font-bold text-green-700">{result.sampleSizePerGroup}</div>
+                          <div className="text-sm text-green-600">per group</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-3xl font-bold text-green-700">{result.totalSampleSize}</div>
+                          <div className="text-sm text-green-600">total</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Effect Size Info */}
+                    <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                      <h4 className="font-semibold text-blue-800 mb-2">Effect Size Analysis</h4>
+                      <div className="space-y-2 text-sm">
+                        <div className="flex justify-between">
+                          <span>Cohen's d:</span>
+                          <span className="font-medium">{result.cohensD}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Effect size:</span>
+                          <span className="font-medium">{getEffectSizeInterpretation(result.cohensD)}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Study Parameters Summary */}
+                    <div className="bg-gray-50 p-4 rounded-lg">
+                      <h4 className="font-semibold text-gray-800 mb-2">Study Parameters</h4>
+                      <div className="space-y-2 text-sm text-gray-600">
+                        <div className="flex justify-between">
+                          <span>Confidence level:</span>
+                          <span>{result.confidence}%</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Statistical power:</span>
+                          <span>{result.powerPercent}%</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Test type:</span>
+                          <span className="capitalize">{inputs.testType}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Interpretation */}
+                    <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-200">
+                      <h4 className="font-semibold text-yellow-800 mb-2">Interpretation</h4>
+                      <p className="text-sm text-yellow-700">
+                        With {result.sampleSizePerGroup} participants per group, you have a {result.powerPercent}% chance
+                        of detecting an effect of size {inputs.effectSize} units (Cohen's d = {result.cohensD})
+                        with {result.confidence}% confidence, assuming your assumptions are correct.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-gray-50 p-8 rounded-lg text-center">
+                    <Calculator className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                    <p className="text-gray-600">
+                      Enter your effect size and standard deviation to calculate the required sample size.
+                    </p>
+                    {errors.general && <p className="text-red-500 mt-2">{errors.general}</p>}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Visualization Section */}
+            {result && (
+              <div className="mt-8 pt-8 border-t border-gray-200">
+                <div className="flex items-center gap-2 mb-6">
+                  <BarChart3 className="w-6 h-6 text-blue-600" />
+                  <h3 className="text-2xl font-semibold text-gray-800">Statistical Visualizations</h3>
+                </div>
+
+                <div className="grid md:grid-cols-2 gap-8">
+                  {/* Hypothesis Test Visualization */}
+                  <div className="bg-gray-50 p-6 rounded-xl">
+                    <h4 className="text-lg font-semibold text-gray-800 mb-4">Hypothesis Test</h4>
+                    <canvas
+                      ref={canvasRef}
+                      className="w-full border border-gray-200 rounded-lg bg-white"
+                      style={{ maxWidth: '100%', height: 'auto' }}
+                    />
+                    <p className="text-sm text-gray-600 mt-2">
+                      Shows the null hypothesis distribution with rejection regions (red areas)
+                      based on your significance level (α = {inputs.alpha}).
+                    </p>
+                  </div>
+
+                  {/* Power Analysis Visualization */}
+                  <div className="bg-gray-50 p-6 rounded-xl">
+                    <h4 className="text-lg font-semibold text-gray-800 mb-4">Power Analysis</h4>
+                    <canvas
+                      ref={powerCanvasRef}
+                      className="w-full border border-gray-200 rounded-lg bg-white"
+                      style={{ maxWidth: '100%', height: 'auto' }}
+                    />
+                    <p className="text-sm text-gray-600 mt-2">
+                      Compares null (blue) and alternative (green) hypothesis distributions.
+                      Green area shows statistical power, yellow shows Type II error risk.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Graph Interpretation */}
+                <div className="mt-6 bg-blue-50 p-4 rounded-lg border border-blue-200">
+                  <h4 className="font-semibold text-blue-800 mb-2">Understanding the Graphs</h4>
+                  <div className="grid md:grid-cols-2 gap-4 text-sm text-blue-700">
+                    <div>
+                      <strong>Left Graph - Hypothesis Test:</strong>
+                      <ul className="mt-1 space-y-1">
+                        <li>• Blue curve: Null hypothesis distribution</li>
+                        <li>• Red areas: Rejection regions (α)</li>
+                        <li>• Dashed lines: Critical values</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <strong>Right Graph - Power Analysis:</strong>
+                      <ul className="mt-1 space-y-1">
+                        <li>• Blue curve: Null hypothesis (H₀)</li>
+                        <li>• Green curve: Alternative hypothesis (H₁)</li>
+                        <li>• Green area: Statistical power (1-β)</li>
+                        <li>• Yellow area: Type II error (β)</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Statistical Theory and Equations Section */}
+          <div className="p-8 bg-gray-50">
+            <div className="flex items-center gap-2 mb-6">
+              <BookOpen className="w-6 h-6 text-indigo-600" />
+              <h3 className="text-2xl font-semibold text-gray-800">Statistical Theory & Equations</h3>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-8">
+              {/* Key Equations */}
+              <div className="bg-white p-6 rounded-xl shadow-sm">
+                <h4 className="text-xl font-semibold text-gray-800 mb-4">Core Equations</h4>
+
+                <div className="space-y-6">
+                  {/* Sample Size Formula */}
+                  <div className="border-l-4 border-blue-500 pl-4">
+                    <h5 className="font-semibold text-gray-700 mb-2">Sample Size Calculation</h5>
+                    <div className="bg-gray-50 p-3 rounded font-mono text-sm mb-2">
+                      n = 2 × [(Z<sub>α</sub> + Z<sub>β</sub>) / d]²
+                    </div>
+                    <div className="text-sm text-gray-600 space-y-1">
+                      <p><strong>n</strong> = sample size per group</p>
+                      <p><strong>Z<sub>α</sub></strong> = critical value for significance level</p>
+                      <p><strong>Z<sub>β</sub></strong> = critical value for power (1-β)</p>
+                      <p><strong>d</strong> = Cohen's d (effect size)</p>
+                    </div>
+                  </div>
+
+                  {/* Cohen's d */}
+                  <div className="border-l-4 border-green-500 pl-4">
+                    <h5 className="font-semibold text-gray-700 mb-2">Effect Size (Cohen's d)</h5>
+                    <div className="bg-gray-50 p-3 rounded font-mono text-sm mb-2">
+                      d = (μ<sub>1</sub> - μ<sub>2</sub>) / σ
+                    </div>
+                    <div className="text-sm text-gray-600 space-y-1">
+                      <p><strong>μ<sub>1</sub>, μ<sub>2</sub></strong> = means of two groups</p>
+                      <p><strong>σ</strong> = pooled standard deviation</p>
+                      <p><strong>d</strong> = standardized effect size</p>
+                    </div>
+                  </div>
+
+                  {/* Critical Values */}
+                  <div className="border-l-4 border-purple-500 pl-4">
+                    <h5 className="font-semibold text-gray-700 mb-2">Critical Values</h5>
+                    <div className="bg-gray-50 p-3 rounded font-mono text-sm mb-2">
+                      Two-tailed: Z<sub>α</sub> = Φ<sup>-1</sup>(1 - α/2)<br/>
+                      One-tailed: Z<sub>α</sub> = Φ<sup>-1</sup>(1 - α)
+                    </div>
+                    <div className="text-sm text-gray-600">
+                      <p><strong>Φ<sup>-1</sup></strong> = inverse normal distribution</p>
+                    </div>
+                  </div>
+
+                  {/* Power Relationship */}
+                  <div className="border-l-4 border-orange-500 pl-4">
+                    <h5 className="font-semibold text-gray-700 mb-2">Statistical Power</h5>
+                    <div className="bg-gray-50 p-3 rounded font-mono text-sm mb-2">
+                      Power = 1 - β = P(reject H<sub>0</sub> | H<sub>1</sub> is true)
+                    </div>
+                    <div className="text-sm text-gray-600">
+                      <p><strong>β</strong> = Type II error probability</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Parameter Explanations */}
+              <div className="bg-white p-6 rounded-xl shadow-sm">
+                <h4 className="text-xl font-semibold text-gray-800 mb-4">Parameter Importance</h4>
+
+                <div className="space-y-6">
+                  {/* Effect Size */}
+                  <div>
+                    <h5 className="font-semibold text-blue-700 mb-2">Effect Size (Raw Difference)</h5>
+                    <p className="text-sm text-gray-600 mb-2">
+                      The minimum meaningful difference between groups that you want to detect.
+                    </p>
+                    <div className="bg-blue-50 p-3 rounded text-sm">
+                      <strong>Why Important:</strong> Determines how sensitive your study needs to be.
+                      Smaller effects require larger samples to detect reliably.
+                    </div>
+                  </div>
+
+                  {/* Standard Deviation */}
+                  <div>
+                    <h5 className="font-semibold text-green-700 mb-2">Standard Deviation (σ)</h5>
+                    <p className="text-sm text-gray-600 mb-2">
+                      Measures the variability or "noise" in your data.
+                    </p>
+                    <div className="bg-green-50 p-3 rounded text-sm">
+                      <strong>Why Important:</strong> Higher variability makes effects harder to detect,
+                      requiring larger samples. Good experimental design minimizes σ.
+                    </div>
+                  </div>
+
+                  {/* Alpha Level */}
+                  <div>
+                    <h5 className="font-semibold text-red-700 mb-2">Significance Level (α)</h5>
+                    <p className="text-sm text-gray-600 mb-2">
+                      The probability of incorrectly rejecting a true null hypothesis (Type I error).
+                    </p>
+                    <div className="bg-red-50 p-3 rounded text-sm">
+                      <strong>Why Important:</strong> Controls false positive rate. Lower α (more stringent)
+                      requires larger samples but reduces false discoveries.
+                    </div>
+                  </div>
+
+                  {/* Statistical Power */}
+                  <div>
+                    <h5 className="font-semibold text-purple-700 mb-2">Statistical Power (1-β)</h5>
+                    <p className="text-sm text-gray-600 mb-2">
+                      The probability of correctly detecting a true effect when it exists.
+                    </p>
+                    <div className="bg-purple-50 p-3 rounded text-sm">
+                      <strong>Why Important:</strong> Higher power reduces Type II errors (missing real effects).
+                      80% is minimum standard, 90% is preferred for important studies.
+                    </div>
+                  </div>
+
+                  {/* Cohen's d */}
+                  <div>
+                    <h5 className="font-semibold text-orange-700 mb-2">Cohen's d (Standardized Effect)</h5>
+                    <p className="text-sm text-gray-600 mb-2">
+                      Effect size expressed in standard deviation units.
+                    </p>
+                    <div className="bg-orange-50 p-3 rounded text-sm">
+                      <strong>Why Important:</strong> Allows comparison across different studies and measures.
+                      Provides context for practical significance beyond statistical significance.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Trade-offs and Relationships */}
+            <div className="mt-8 bg-white p-6 rounded-xl shadow-sm">
+              <h4 className="text-xl font-semibold text-gray-800 mb-4">Parameter Relationships & Trade-offs</h4>
+
+              <div className="grid md:grid-cols-3 gap-6">
+                <div className="text-center">
+                  <div className="bg-blue-100 p-4 rounded-lg mb-3">
+                    <h5 className="font-semibold text-blue-800">Sample Size ↑</h5>
+                  </div>
+                  <div className="text-sm text-gray-600 space-y-1">
+                    <p>• Power ↑ (detect smaller effects)</p>
+                    <p>• Cost ↑ (more participants)</p>
+                    <p>• Time ↑ (longer data collection)</p>
+                    <p>• Precision ↑ (narrower confidence intervals)</p>
+                  </div>
+                </div>
+
+                <div className="text-center">
+                  <div className="bg-green-100 p-4 rounded-lg mb-3">
+                    <h5 className="font-semibold text-green-800">Effect Size ↑</h5>
+                  </div>
+                  <div className="text-sm text-gray-600 space-y-1">
+                    <p>• Sample size ↓ (easier to detect)</p>
+                    <p>• Power ↑ (at same sample size)</p>
+                    <p>• Practical significance ↑</p>
+                    <p>• Clinical relevance ↑</p>
+                  </div>
+                </div>
+
+                <div className="text-center">
+                  <div className="bg-purple-100 p-4 rounded-lg mb-3">
+                    <h5 className="font-semibold text-purple-800">Variability ↑</h5>
+                  </div>
+                  <div className="text-sm text-gray-600 space-y-1">
+                    <p>• Sample size ↑ (need more data)</p>
+                    <p>• Power ↓ (harder to detect effects)</p>
+                    <p>• Effect size ↓ (signal-to-noise ratio)</p>
+                    <p>• Control through design ✓</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 p-4 bg-yellow-50 rounded-lg border border-yellow-200">
+                <div className="flex items-start gap-3">
+                  <Info className="w-5 h-5 text-yellow-600 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <h5 className="font-semibold text-yellow-800 mb-2">Key Design Principle</h5>
+                    <p className="text-sm text-yellow-700">
+                      Power analysis should be conducted <strong>before</strong> data collection to determine
+                      adequate sample sizes. Post-hoc power analysis (after seeing results) is generally
+                      not informative and can be misleading.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+            {/* Additional Information */}
+            <div className="mt-8 pt-8 border-t border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-800 mb-4">About This Calculator</h3>
+              <div className="grid md:grid-cols-2 gap-6 text-sm text-gray-600">
+                <div>
+                  <h4 className="font-medium text-gray-800 mb-2">Assumptions</h4>
+                  <ul className="space-y-1">
+                    <li>• Two-group comparison (treatment vs control)</li>
+                    <li>• Normal distribution of data</li>
+                    <li>• Equal variances between groups</li>
+                    <li>• Independent observations</li>
+                  </ul>
+                </div>
+                <div>
+                  <h4 className="font-medium text-gray-800 mb-2">Cohen's d Interpretation</h4>
+                  <ul className="space-y-1">
+                    <li>• 0.2 = Small effect</li>
+                    <li>• 0.5 = Medium effect</li>
+                    <li>• 0.8 = Large effect</li>
+                    <li>• 1.0+ = Very large effect</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default PowerCalculator;

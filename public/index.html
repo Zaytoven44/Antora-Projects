@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DOE Power Testing Application</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="styles.css" rel="stylesheet">
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container">
+            <a class="navbar-brand" href="#">
+                <i class="fas fa-chart-line me-2"></i>
+                DOE Power Testing
+            </a>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <div class="row">
+            <div class="col-lg-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-cog me-2"></i>Test Configuration</h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="powerAnalysisForm">
+                            <div class="mb-3">
+                                <label for="testType" class="form-label">Test Type</label>
+                                <select class="form-select" id="testType" required>
+                                    <option value="">Select a test type...</option>
+                                </select>
+                                <div class="form-text" id="testDescription"></div>
+                            </div>
+
+                            <div id="parameterInputs">
+                                <!-- Dynamic parameter inputs will be inserted here -->
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="alpha" class="form-label">Significance Level (α)</label>
+                                <input type="number" class="form-control" id="alpha" value="0.05" min="0.001" max="0.1" step="0.001">
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="targetPower" class="form-label">Target Power</label>
+                                <input type="number" class="form-control" id="targetPower" value="0.8" min="0.1" max="0.99" step="0.01">
+                            </div>
+
+                            <div class="d-grid gap-2">
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="fas fa-calculator me-2"></i>Calculate Power
+                                </button>
+                                <button type="button" class="btn btn-success" id="calculateSampleSize">
+                                    <i class="fas fa-users me-2"></i>Calculate Sample Size
+                                </button>
+                                <button type="button" class="btn btn-info" id="generatePowerCurve">
+                                    <i class="fas fa-chart-line me-2"></i>Generate Power Curve
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <div class="card mt-3">
+                    <div class="card-header">
+                        <h6><i class="fas fa-info-circle me-2"></i>Effect Size Guidelines</h6>
+                    </div>
+                    <div class="card-body">
+                        <small>
+                            <strong>Cohen's d (t-tests):</strong><br>
+                            • Small: 0.2<br>
+                            • Medium: 0.5<br>
+                            • Large: 0.8<br><br>
+                            <strong>Cohen's f (ANOVA):</strong><br>
+                            • Small: 0.1<br>
+                            • Medium: 0.25<br>
+                            • Large: 0.4
+                        </small>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-lg-8">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-chart-bar me-2"></i>Results</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="resultsContainer">
+                            <div class="text-center text-muted">
+                                <i class="fas fa-chart-line fa-3x mb-3"></i>
+                                <p>Configure your test parameters and click "Calculate Power" to see results.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card mt-3">
+                    <div class="card-header">
+                        <h6><i class="fas fa-chart-line me-2"></i>Power Curve</h6>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="powerCurveChart" width="400" height="200"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Modal -->
+    <div class="modal fade" id="loadingModal" tabindex="-1" data-bs-backdrop="static">
+        <div class="modal-dialog modal-sm modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-body text-center">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="mt-2">Calculating...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
